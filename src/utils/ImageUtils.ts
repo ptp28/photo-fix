@@ -56,45 +56,58 @@ export default class ImageUtils {
     }
 
     public static readImageData(imageData: ImageData) {
-        const rgbImage = new RGBImage(imageData.width, imageData.height);
-        let x = 0;
-        let y = 0;
-        // Populate the RGBImage object with pixel data
-        for (let i = 0; i < imageData.data.length; i += 4) {
-            const r = imageData.data[i];
-            const g = imageData.data[i + 1];
-            const b = imageData.data[i + 2];
-            const a = imageData.data[i + 3];
+        const width = imageData.width;
+        const height = imageData.height;
+        const size = width * height * 3;
+        const pixels = new Uint8ClampedArray(size);
 
-            rgbImage.set(x, y, ImageChannel.RED, r);
-            rgbImage.set(x, y, ImageChannel.GREEN, g);
-            rgbImage.set(x, y, ImageChannel.BLUE, b);
-
-            x++;
-            if(x === imageData.width) {
-                x = 0;
-                y++;
-            }
+        let srcIdx = 0;
+        let destIdx = 0;
+        const len = width * height;
+        for (let i = 0; i < len; i++) {
+            pixels[destIdx] = imageData.data[srcIdx];
+            pixels[destIdx + 1] = imageData.data[srcIdx + 1];
+            pixels[destIdx + 2] = imageData.data[srcIdx + 2];
+            srcIdx += 4;
+            destIdx += 3;
         }
-        return rgbImage;
+
+        return new RGBImage(width, height, pixels);
     }
 
     public static saveImageData(image: ImageInterface) {
-        const imageDataArray = new Uint8ClampedArray(image.getWidth() * image.getHeight() * 4);
+        const width = image.getWidth();
+        const height = image.getHeight();
+        const imageDataArray = new Uint8ClampedArray(width * height * 4);
 
-        for (let y = 0; y < image.getHeight(); y++) {
-            for (let x = 0; x < image.getWidth(); x++) {
-                const pixelIndex = y * image.getWidth() + x;
-                const rgbaIndex = pixelIndex * 4;
+        if (image instanceof RGBImage) {
+            const rawPixels = image.getRawPixels();
+            let srcIdx = 0;
+            let destIdx = 0;
+            const len = width * height;
+            for (let i = 0; i < len; i++) {
+                imageDataArray[destIdx] = rawPixels[srcIdx];
+                imageDataArray[destIdx + 1] = rawPixels[srcIdx + 1];
+                imageDataArray[destIdx + 2] = rawPixels[srcIdx + 2];
+                imageDataArray[destIdx + 3] = 255; // Alpha
+                srcIdx += 3;
+                destIdx += 4;
+            }
+        } else {
+            // Fallback for non-RGBImage custom implementations
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const pixelIndex = y * width + x;
+                    const rgbaIndex = pixelIndex * 4;
 
-                // Set RGBA values (Assume grayscale: R = G = B = pixelValue, full alpha)
-                imageDataArray[rgbaIndex] = image.get(x, y, ImageChannel.RED); // Red
-                imageDataArray[rgbaIndex + 1] = image.get(x, y, ImageChannel.GREEN); // Green
-                imageDataArray[rgbaIndex + 2] = image.get(x, y, ImageChannel.BLUE); // Blue
-                imageDataArray[rgbaIndex + 3] = 255; // Alpha (fully opaque)
+                    imageDataArray[rgbaIndex] = image.get(x, y, ImageChannel.RED);
+                    imageDataArray[rgbaIndex + 1] = image.get(x, y, ImageChannel.GREEN);
+                    imageDataArray[rgbaIndex + 2] = image.get(x, y, ImageChannel.BLUE);
+                    imageDataArray[rgbaIndex + 3] = 255;
+                }
             }
         }
 
-        return new ImageData(imageDataArray, image.getWidth(), image.getHeight());
+        return new ImageData(imageDataArray, width, height);
     }
 }

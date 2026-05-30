@@ -4,7 +4,7 @@ import ImageInterface from "../src/model/ImageInterface";
 
 describe('RGBImage', () => {
 
-    let image: ImageInterface;
+    let image: RGBImage;
     beforeEach(() => {
         image = new RGBImage(3, 2);
     });

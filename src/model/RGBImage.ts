@@ -4,9 +4,9 @@ import ImageInterface from "./ImageInterface.ts";
 export default class RGBImage implements ImageInterface {
     private readonly _width: number;
     private readonly _height: number;
-    private readonly _pixels: number[][][];
+    private readonly _pixels: Uint8ClampedArray;
 
-    constructor(width: number, height: number, pixels?: number[][][]) {
+    constructor(width: number, height: number, pixels?: Uint8ClampedArray) {
         if (width < 1) {
             throw new Error("Width must be positive");
         }
@@ -16,9 +16,7 @@ export default class RGBImage implements ImageInterface {
 
         this._width = width;
         this._height = height;
-        this._pixels = pixels ?
-            pixels.map(row => row.map(col => [...col]))
-            : Array.from({length: height}, () => Array.from({length: width}, () => [0, 0, 0]));
+        this._pixels = pixels ? pixels : new Uint8ClampedArray(width * height * 3);
     }
 
     get(x: number, y: number, channel: ImageChannel): number {
@@ -28,7 +26,7 @@ export default class RGBImage implements ImageInterface {
             );
         }
 
-        return this._pixels[y][x][channel];
+        return this._pixels[(y * this._width + x) * 3 + channel];
     }
 
     set(x: number, y: number, channel: ImageChannel, value: number): void {
@@ -39,7 +37,7 @@ export default class RGBImage implements ImageInterface {
             throw new Error(`Error: Value must be in the range 0-255`);
         }
 
-        this._pixels[y][x][channel] = value;
+        this._pixels[(y * this._width + x) * 3 + channel] = value;
     }
 
     getWidth(): number {
@@ -50,148 +48,144 @@ export default class RGBImage implements ImageInterface {
         return this._height;
     }
 
-    adjustBrightness(value: number): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height, this._pixels);
-        for (let x = 0; x < this._width; x++) {
-            for (let y = 0; y < this._height; y++) {
-                newImage.set(x, y, ImageChannel.RED, Math.max(0, Math.min(this.get(x, y, ImageChannel.RED) + value, 255)));
-                newImage.set(x, y, ImageChannel.GREEN, Math.max(0, Math.min(this.get(x, y, ImageChannel.GREEN) + value, 255)));
-                newImage.set(x, y, ImageChannel.BLUE, Math.max(0, Math.min(this.get(x, y, ImageChannel.BLUE) + value, 255)));
+    getRawPixels(): Uint8ClampedArray {
+        return this._pixels;
+    }
+
+    /**
+     * Map helper to eliminate loop boilerplate across point-based filters.
+     * Iterates sequentially over the flat array and applies a transformation callback.
+     */
+    public map(
+        transformer: (r: number, g: number, b: number, x: number, y: number) => [number, number, number]
+    ): RGBImage {
+        const size = this._width * this._height * 3;
+        const newPixels = new Uint8ClampedArray(size);
+
+        for (let y = 0; y < this._height; y++) {
+            for (let x = 0; x < this._width; x++) {
+                const idx = (y * this._width + x) * 3;
+                const r = this._pixels[idx];
+                const g = this._pixels[idx + 1];
+                const b = this._pixels[idx + 2];
+                const [nr, ng, nb] = transformer(r, g, b, x, y);
+                newPixels[idx] = nr;
+                newPixels[idx + 1] = ng;
+                newPixels[idx + 2] = nb;
             }
         }
-        return newImage;
+
+        return new RGBImage(this._width, this._height, newPixels);
+    }
+
+    adjustBrightness(value: number): ImageInterface {
+        return this.map((r, g, b) => [
+            Math.max(0, Math.min(r + value, 255)),
+            Math.max(0, Math.min(g + value, 255)),
+            Math.max(0, Math.min(b + value, 255))
+        ]);
     }
 
     adjustContrast(value: number): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height, this._pixels);
-        let factor = (259 * (value + 255)) / (255 * (259 - value));
-        for (let x = 0; x < this._width; x++) {
-            for (let y = 0; y < this._height; y++) {
-                newImage.set(x, y, ImageChannel.RED, Math.max(0, Math.min(factor * (this.get(x, y, ImageChannel.RED) - 128) + 128, 255)));
-                newImage.set(x, y, ImageChannel.GREEN, Math.max(0, Math.min(factor * (this.get(x, y, ImageChannel.GREEN) - 128) + 128, 255)));
-                newImage.set(x, y, ImageChannel.BLUE, Math.max(0, Math.min(factor * (this.get(x, y, ImageChannel.BLUE) - 128) + 128, 255)));
-            }
-        }
-        return newImage;
+        const factor = (259 * (value + 255)) / (255 * (259 - value));
+        return this.map((r, g, b) => [
+            Math.max(0, Math.min(factor * (r - 128) + 128, 255)),
+            Math.max(0, Math.min(factor * (g - 128) + 128, 255)),
+            Math.max(0, Math.min(factor * (b - 128) + 128, 255))
+        ]);
     }
 
     adjustSaturation(value: number): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height, this._pixels);
-        for (let x = 0; x < this._width; x++) {
-            for (let y = 0; y < this._height; y++) {
-                let r = this.get(x, y, ImageChannel.RED) / 255;
-                let g = this.get(x, y, ImageChannel.GREEN) / 255;
-                let b = this.get(x, y, ImageChannel.BLUE) / 255;
-                // Convert RGB to HSL
-                let max = Math.max(r, g, b);
-                let min = Math.min(r, g, b);
-                let l = (max + min) / 2;
-                let s = 0;
-                let h = 0;
-                if (max !== min) {
-                    let d = max - min;
-                    s = d / (1 - Math.abs(2 * l - 1));
-                    if (max === r) {
-                        h = ((g - b) / d) % 6;
-                    } else if (max === g) {
-                        h = (b - r) / d + 2;
-                    } else {
-                        h = (r - g) / d + 4;
-                    }
-
-                    h *= 60;
-                    if (h < 0) h += 360;
-                }
-                // Adjust saturation
-                s = Math.max(0, Math.min(s * (1 + value / 100), 1));
-                // Convert HSL back to RGB
-                let c = (1 - Math.abs(2 * l - 1)) * s;
-                let x1 = c * (1 - Math.abs((h / 60) % 2 - 1));
-                let m = l - c / 2;
-                let r1 = 0, g1 = 0, b1 = 0;
-                if (h < 60) {
-                    r1 = c; g1 = x1; b1 = 0;
-                } else if (h < 120) {
-                    r1 = x1; g1 = c; b1 = 0;
-                } else if (h < 180) {
-                    r1 = 0; g1 = c; b1 = x1;
-                } else if (h < 240) {
-                    r1 = 0; g1 = x1; b1 = c;
-                } else if (h < 300) {
-                    r1 = x1; g1 = 0; b1 = c;
+        return this.map((r, g, b) => {
+            const rNorm = r / 255;
+            const gNorm = g / 255;
+            const bNorm = b / 255;
+            // Convert RGB to HSL
+            const max = Math.max(rNorm, gNorm, bNorm);
+            const min = Math.min(rNorm, gNorm, bNorm);
+            const l = (max + min) / 2;
+            let s = 0;
+            let h = 0;
+            if (max !== min) {
+                const d = max - min;
+                s = d / (1 - Math.abs(2 * l - 1));
+                if (max === rNorm) {
+                    h = ((gNorm - bNorm) / d) % 6;
+                } else if (max === gNorm) {
+                    h = (bNorm - rNorm) / d + 2;
                 } else {
-                    r1 = c; g1 = 0; b1 = x1;
+                    h = (rNorm - gNorm) / d + 4;
                 }
-                // Scale back to 0-255
-                newImage.set(x, y, ImageChannel.RED, Math.max(0, Math.min((r1 + m) * 255, 255)));
-                newImage.set(x, y, ImageChannel.GREEN, Math.max(0, Math.min((g1 + m) * 255, 255)));
-                newImage.set(x, y, ImageChannel.BLUE, Math.max(0, Math.min((b1 + m) * 255, 255)));
+
+                h *= 60;
+                if (h < 0) h += 360;
             }
-        }
-        return newImage;
+            // Adjust saturation
+            s = Math.max(0, Math.min(s * (1 + value / 100), 1));
+            // Convert HSL back to RGB
+            const c = (1 - Math.abs(2 * l - 1)) * s;
+            const x1 = c * (1 - Math.abs((h / 60) % 2 - 1));
+            const m = l - c / 2;
+            let r1 = 0, g1 = 0, b1 = 0;
+            if (h < 60) {
+                r1 = c; g1 = x1; b1 = 0;
+            } else if (h < 120) {
+                r1 = x1; g1 = c; b1 = 0;
+            } else if (h < 180) {
+                r1 = 0; g1 = c; b1 = x1;
+            } else if (h < 240) {
+                r1 = 0; g1 = x1; b1 = c;
+            } else if (h < 300) {
+                r1 = x1; g1 = 0; b1 = c;
+            } else {
+                r1 = c; g1 = 0; b1 = x1;
+            }
+            // Scale back to 0-255
+            return [
+                Math.max(0, Math.min((r1 + m) * 255, 255)),
+                Math.max(0, Math.min((g1 + m) * 255, 255)),
+                Math.max(0, Math.min((b1 + m) * 255, 255))
+            ];
+        });
     }
 
     verticalFlip(): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height);
-        for (let x = 0; x < this._width; x++) {
-            for (let y = 0; y < this._height; y++) {
-                newImage.set(x, y, ImageChannel.RED, this.get(x, this._height - 1 - y, ImageChannel.RED));
-                newImage.set(x, y, ImageChannel.GREEN, this.get(x, this._height - 1 - y, ImageChannel.GREEN));
-                newImage.set(x, y, ImageChannel.BLUE, this.get(x, this._height - 1 - y, ImageChannel.BLUE));
-            }
-        }
-        return newImage;
+        const h = this._height;
+        return this.map((_r, _g, _b, x, y) => [
+            this.get(x, h - 1 - y, ImageChannel.RED),
+            this.get(x, h - 1 - y, ImageChannel.GREEN),
+            this.get(x, h - 1 - y, ImageChannel.BLUE)
+        ]);
     }
 
     horizontalFlip(): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height);
-        for (let x = 0; x < this._width; x++) {
-            for (let y = 0; y < this._height; y++) {
-                newImage.set(x, y, ImageChannel.RED, this.get(this._width - 1 - x, y, ImageChannel.RED));
-                newImage.set(x, y, ImageChannel.GREEN, this.get(this._width - 1 - x, y, ImageChannel.GREEN));
-                newImage.set(x, y, ImageChannel.BLUE, this.get(this._width - 1 - x, y, ImageChannel.BLUE));
-            }
-        }
-        return newImage;
+        const w = this._width;
+        return this.map((_r, _g, _b, x, y) => [
+            this.get(w - 1 - x, y, ImageChannel.RED),
+            this.get(w - 1 - x, y, ImageChannel.GREEN),
+            this.get(w - 1 - x, y, ImageChannel.BLUE)
+        ]);
     }
 
     greyscaleIntensity(): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height);
-        for (let x = 0; x < this._width; x++) {
-            for (let y = 0; y < this._height; y++) {
-                const avg = Math.round((this.get(x, y, ImageChannel.RED) + this.get(x, y, ImageChannel.GREEN) + this.get(x, y, ImageChannel.BLUE)) / 3);
-                newImage.set(x, y, ImageChannel.RED, avg);
-                newImage.set(x, y, ImageChannel.GREEN, avg);
-                newImage.set(x, y, ImageChannel.BLUE, avg);
-            }
-        }
-        return newImage;
+        return this.map((r, g, b) => {
+            const avg = Math.round((r + g + b) / 3);
+            return [avg, avg, avg];
+        });
     }
 
     greyscaleLuma(): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height);
-        for (let x = 0; x < this._width; x++) {
-            for (let y = 0; y < this._height; y++) {
-                const luma = Math.round(0.2126 * this.get(x, y, ImageChannel.RED) + 0.7152 * this.get(x, y, ImageChannel.GREEN) + 0.0722 * this.get(x, y, ImageChannel.BLUE));
-                newImage.set(x, y, ImageChannel.RED, luma);
-                newImage.set(x, y, ImageChannel.GREEN, luma);
-                newImage.set(x, y, ImageChannel.BLUE, luma);
-            }
-        }
-        return newImage;
+        return this.map((r, g, b) => {
+            const luma = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+            return [luma, luma, luma];
+        });
     }
 
     greyscaleValue(): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height);
-        for (let x = 0; x < this._width; x++) {
-            for (let y = 0; y < this._height; y++) {
-                const value = Math.max(this.get(x, y, ImageChannel.RED), this.get(x, y, ImageChannel.GREEN), this.get(x, y, ImageChannel.BLUE));
-                newImage.set(x, y, ImageChannel.RED, value);
-                newImage.set(x, y, ImageChannel.GREEN, value);
-                newImage.set(x, y, ImageChannel.BLUE, value);
-            }
-        }
-        return newImage;
+        return this.map((r, g, b) => {
+            const value = Math.max(r, g, b);
+            return [value, value, value];
+        });
     }
 
     pixelate(): ImageInterface {
@@ -227,31 +221,27 @@ export default class RGBImage implements ImageInterface {
     }
 
     dither(): ImageInterface {
-        // Floyd-Steinberg dithering for greyscale
+        // Floyd-Steinberg dithering for greyscale (flat 1D helper representation)
         const newImage = new RGBImage(this._width, this._height);
 
-        // Create a deep copy of the pixel data to work on
-        const pixels: number[][][] = [];
+        const size = this._width * this._height;
+        const tempGreys = new Float32Array(size);
         for (let y = 0; y < this._height; y++) {
-            const row: number[][] = [];
             for (let x = 0; x < this._width; x++) {
-                // Convert to greyscale using luminosity method
                 const r = this.get(x, y, ImageChannel.RED);
                 const g = this.get(x, y, ImageChannel.GREEN);
                 const b = this.get(x, y, ImageChannel.BLUE);
-                const grey = 0.299 * r + 0.587 * g + 0.114 * b;
-                row.push([grey, grey, grey]);
+                tempGreys[y * this._width + x] = 0.299 * r + 0.587 * g + 0.114 * b;
             }
-            pixels.push(row);
         }
 
         for (let y = 0; y < this._height; y++) {
             for (let x = 0; x < this._width; x++) {
-                const oldPixel = pixels[y][x][0];
+                const idx = y * this._width + x;
+                const oldPixel = tempGreys[idx];
                 const newPixel = oldPixel < 128 ? 0 : 255;
                 const error = oldPixel - newPixel;
 
-                // Set the dithered value to all channels
                 newImage.set(x, y, ImageChannel.RED, newPixel);
                 newImage.set(x, y, ImageChannel.GREEN, newPixel);
                 newImage.set(x, y, ImageChannel.BLUE, newPixel);
@@ -261,23 +251,16 @@ export default class RGBImage implements ImageInterface {
                 //     *    7
                 // 3   5   1
                 if (x + 1 < this._width) {
-                    pixels[y][x + 1][0] += error * 7 / 16;
-                    pixels[y][x + 1][1] += error * 7 / 16;
-                    pixels[y][x + 1][2] += error * 7 / 16;
+                    tempGreys[idx + 1] += error * 7 / 16;
                 }
                 if (y + 1 < this._height) {
+                    const rowOffset = (y + 1) * this._width;
                     if (x > 0) {
-                        pixels[y + 1][x - 1][0] += error * 3 / 16;
-                        pixels[y + 1][x - 1][1] += error * 3 / 16;
-                        pixels[y + 1][x - 1][2] += error * 3 / 16;
+                        tempGreys[rowOffset + (x - 1)] += error * 3 / 16;
                     }
-                    pixels[y + 1][x][0] += error * 5 / 16;
-                    pixels[y + 1][x][1] += error * 5 / 16;
-                    pixels[y + 1][x][2] += error * 5 / 16;
+                    tempGreys[rowOffset + x] += error * 5 / 16;
                     if (x + 1 < this._width) {
-                        pixels[y + 1][x + 1][0] += error / 16;
-                        pixels[y + 1][x + 1][1] += error / 16;
-                        pixels[y + 1][x + 1][2] += error / 16;
+                        tempGreys[rowOffset + (x + 1)] += error / 16;
                     }
                 }
             }
@@ -337,7 +320,6 @@ export default class RGBImage implements ImageInterface {
                             }
                         }
                     }
-                    // Clamp values between 0 and 255
                     sum = Math.max(0, Math.min(255, Math.round(sum)));
                     newImage.set(x, y, channel, sum);
                 }
@@ -347,39 +329,15 @@ export default class RGBImage implements ImageInterface {
     }
 
     sepia(): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height);
-        
-        for (let y = 0; y < this._height; y++) {
-            for (let x = 0; x < this._width; x++) {
-                const r = this.get(x, y, ImageChannel.RED);
-                const g = this.get(x, y, ImageChannel.GREEN);
-                const b = this.get(x, y, ImageChannel.BLUE);
-                
-                // Apply sepia filter formula
-                const newR = Math.min(255, Math.round((r * 0.393) + (g * 0.769) + (b * 0.189)));
-                const newG = Math.min(255, Math.round((r * 0.349) + (g * 0.686) + (b * 0.168)));
-                const newB = Math.min(255, Math.round((r * 0.272) + (g * 0.534) + (b * 0.131)));
-                
-                newImage.set(x, y, ImageChannel.RED, newR);
-                newImage.set(x, y, ImageChannel.GREEN, newG);
-                newImage.set(x, y, ImageChannel.BLUE, newB);
-            }
-        }
-        return newImage;
-    }
-    
-    invert(): ImageInterface {
-        const newImage = new RGBImage(this._width, this._height);
-        
-        for (let y = 0; y < this._height; y++) {
-            for (let x = 0; x < this._width; x++) {
-                for (let channel = 0; channel < 3; channel++) {
-                    const value = this.get(x, y, channel);
-                    newImage.set(x, y, channel, 255 - value);
-                }
-            }
-        }
-        return newImage;
+        return this.map((r, g, b) => {
+            const newR = Math.min(255, Math.round((r * 0.393) + (g * 0.769) + (b * 0.189)));
+            const newG = Math.min(255, Math.round((r * 0.349) + (g * 0.686) + (b * 0.168)));
+            const newB = Math.min(255, Math.round((r * 0.272) + (g * 0.534) + (b * 0.131)));
+            return [newR, newG, newB];
+        });
     }
 
+    invert(): ImageInterface {
+        return this.map((r, g, b) => [255 - r, 255 - g, 255 - b]);
+    }
 }
