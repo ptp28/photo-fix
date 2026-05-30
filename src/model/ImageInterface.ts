@@ -1,21 +1,8 @@
-import {ImageChannel} from "./ImageChannel.ts";
+import type { ImageOperation } from "./operations/ImageOperation.ts";
 
 export default interface ImageInterface {
-    get(x: number, y: number, channel: ImageChannel): number;
+    get(x: number, y: number, channel: number): number;
     getWidth(): number;
     getHeight(): number;
-    adjustBrightness(value: number): ImageInterface;
-    adjustContrast(value: number): ImageInterface;
-    adjustSaturation(value: number): ImageInterface;
-    verticalFlip(): ImageInterface;
-    horizontalFlip(): ImageInterface;
-    greyscaleIntensity(): ImageInterface;
-    greyscaleLuma(): ImageInterface;
-    greyscaleValue(): ImageInterface;
-    pixelate(): ImageInterface;
-    dither(): ImageInterface;
-    blur(): ImageInterface;
-    sharpen(): ImageInterface;
-    sepia(): ImageInterface;
-    invert(): ImageInterface;
+    apply(operation: ImageOperation): ImageInterface;
 }

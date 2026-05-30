@@ -2,7 +2,6 @@ import ImageInterface from "./ImageInterface.ts";
 import ImageManager from "./ImageManager.ts";
 import RGBImage from "./RGBImage.ts";
 import {ImageChannel} from "./ImageChannel.ts";
-import {name} from "ts-jest/dist/transformers/hoist-jest";
 
 export class ImageManagerImpl implements ImageManager {
     private images: Map<string, ImageInterface>;
